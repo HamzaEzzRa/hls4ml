@@ -7,7 +7,7 @@ from queue import Queue
 from collections.abc import Iterable
 
 from hls4ml.model.types import FixedPrecisionType, NamedType, IntegerPrecisionType
-from hls4ml.model.layers import Layer, Dense, BatchNormalization, Embedding, Conv1D, Conv2D, Conv2DBatchnorm, SeparableConv1D, SeparableConv2D, DepthwiseConv2D, Activation, ParametrizedActivation, PReLU, Softmax, Pooling1D, Pooling2D, GlobalPooling1D, GlobalPooling2D, ZeroPadding1D, ZeroPadding2D, Merge, Concatenate, Dot, Resize, Transpose, SimpleRNN, LSTM, GRU, GarNet, GarNetStack, LISTA_Block
+from hls4ml.model.layers import Layer, Dense, BatchNormalization, Embedding, Conv1D, Conv2D, Conv2DBatchnorm, SeparableConv1D, SeparableConv2D, DepthwiseConv2D, Activation, ParametrizedActivation, PReLU, Softmax, Pooling1D, Pooling2D, GlobalPooling1D, GlobalPooling2D, ZeroPadding1D, ZeroPadding2D, Merge, Concatenate, Dot, Resize, Transpose, SimpleRNN, LSTM, GRU, GarNet, GarNetStack, LISTA_Block, CLISTA_Encoder
 from hls4ml.model.attributes import Attribute
 from hls4ml.model.optimizer import get_backend_passes, layer_optimizer, model_optimizer
 from hls4ml.model.flow import register_flow
@@ -322,7 +322,9 @@ class VivadoBackend(FPGABackend):
         index_t = IntegerPrecisionType(width=1, signed=False)
         compression = layer.model.config.get_compression(layer)
         if layer.model.config.is_resource_strategy(layer):
-            n_in, n_out = self.get_layer_mult_size(layer)
+            n_in = layer.get_attr('n_in')
+            n_out = layer.get_attr('n_out')
+            
             self.set_target_reuse_factor(layer)
             self.set_closest_reuse_factor(layer, n_in, n_out)
             if compression:
@@ -333,3 +335,21 @@ class VivadoBackend(FPGABackend):
         else:
             layer.set_attr('strategy', 'latency')
         layer.set_attr('index_t', NamedType('layer{}_index'.format(layer.index), index_t))
+
+    @layer_optimizer(CLISTA_Encoder)
+    def init_clista(self, layer):
+        if len(layer.weights['weight'].data.shape) == 2: # This can happen if we assign weights of Dense layer to 1x1 Conv2D
+            layer.weights['weight'].data = np.expand_dims(layer.weights['weight'].data, axis=(0,1))
+
+        if layer.model.config.is_resource_strategy(layer):
+            layer.set_attr('strategy', 'resource')
+            self.set_target_reuse_factor(layer)
+            
+            n_in = layer.get_attr('n_chan') * layer.get_attr('filt_height') * layer.get_attr('filt_width')
+            n_out = layer.get_attr('n_filt')
+
+            self.set_closest_reuse_factor(layer, n_in, n_out)
+        else:
+            layer.set_attr('strategy', 'latency')
+        
+        layer.set_attr('implementation', layer.model.config.get_conv_implementation(layer).lower())

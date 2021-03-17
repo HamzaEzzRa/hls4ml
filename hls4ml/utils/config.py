@@ -112,8 +112,8 @@ def config_from_keras_model(model, granularity='model', default_precision='ap_fi
     reshaping_layers = ['ZeroPadding1D', 'ZeroPadding2D']
     graph_layers = ['GarNet', 'GarNetStack']
     rnn_layers = ['SimpleRNN', 'LSTM', 'GRU']
-    lista_layers = ['LISTA_Block']
-    qlista_layers = ['QLISTA_Block']
+    lista_layers = ['LISTA_Block', 'CLISTA_Encoder']
+    qlista_layers = ['QLISTA_Block', 'QCLISTA_Encoder']
     #Define layers to skip because they're not configurable or not converted to HLS
     skip_layers = ['Dropout', 'Flatten', 'Reshape', 'Permute']
     #All supported layers

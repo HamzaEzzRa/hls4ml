@@ -212,7 +212,8 @@ def register_pass(name, opt_cls, backend=None):
     name = _get_backend_name_prefix(name, backend)
 
     if name in optimizer_map:
-        raise Exception('Optimization pass {} already registered'.format(name))
+        # raise Exception('Optimization pass {} already registered'.format(name))
+        return
 
     if inspect.isclass(opt_cls):
         opt = opt_cls()

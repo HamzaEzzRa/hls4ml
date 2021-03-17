@@ -93,7 +93,8 @@ def register_flow(name, optimizers, requires=None, backend=None):
     name = _get_backend_name_prefix(name, backend)
 
     if name in flow_map:
-        raise Exception('Flow {} already registered'.format(name))
+        # raise Exception('Flow {} already registered'.format(name))
+        return
 
     if callable(optimizers):
         flow = DynamicFlow(name, optimizer_func=optimizers, requires=requires)

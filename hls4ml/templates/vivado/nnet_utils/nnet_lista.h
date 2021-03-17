@@ -1,4 +1,4 @@
-//    Copyright (C) 2022 Hamza Ezzaoui Rahali
+//    Hamza Ezzaoui Rahali, 2022-2023
 //
 //    This program is free software: you can redistribute it and/or modify
 //    it under the terms of the GNU General Public License as published by
@@ -19,10 +19,15 @@
 
 #include "nnet_common.h"
 #include "nnet_mult.h"
+#include "nnet_dense.h"
 #include "nnet_helpers.h"
 #include "hls_stream.h"
 #include <math.h>
 
+// # A little hack to pass boolean parameters from Python to the config
+// Python will pass True/False which is invalid syntax in C++ (needs lowercase true/false)
+// In the Python backend template, we use this on "True"/"False" as strings to figure out the C++ boolean equivalent
+// Note: constexpr functions can only have 1 return statement, hence the recursion
 constexpr bool strings_equal(char const * a, char const * b) {
     return *a == *b && (*a == '\0' || strings_equal(a + 1, b + 1));
 }
@@ -56,7 +61,8 @@ void lista_latency(
     data_T    data[CONFIG_T::n_in],
     res_T     res[CONFIG_T::n_out],
     typename CONFIG_T::weight_t  weights[CONFIG_T::n_in*CONFIG_T::n_out],
-    typename CONFIG_T::bias_t    biases[CONFIG_T::n_out])
+    typename CONFIG_T::bias_t    biases[CONFIG_T::n_out]
+)
 {
     data_T cache;
     typename CONFIG_T::accum_t tmp[CONFIG_T::n_in];
@@ -71,13 +77,12 @@ void lista_latency(
     #pragma HLS PIPELINE II=CONFIG_T::reuse_factor
 
     // #pragma HLS ARRAY_PARTITION variable=weights complete // remove this line for now, it breaks compression sometimes
-    // #pragma HLS ARRAY_PARTITION variable=biases complete
     #pragma HLS ARRAY_PARTITION variable=biases complete
     #pragma HLS ARRAY_PARTITION variable=tmp complete
     #pragma HLS ARRAY_PARTITION variable=acc complete
 
-    int multiplier_limit = ceil(float(CONFIG_T::n_in*CONFIG_T::n_out) / float(CONFIG_T::reuse_factor)) - floor(float(CONFIG_T::n_zeros) / float(CONFIG_T::reuse_factor));
-    CONFIG_T::template product<data_T, typename CONFIG_T::weight_t>::limit(multiplier_limit);
+    // int multiplier_limit = ceil(float(CONFIG_T::n_in*CONFIG_T::n_out) / float(CONFIG_T::reuse_factor)) - floor(float(CONFIG_T::n_zeros) / float(CONFIG_T::reuse_factor));
+    // CONFIG_T::template product<data_T, typename CONFIG_T::weight_t>::limit(multiplier_limit);
 
     Activation1: for (int iacc = 0; iacc < CONFIG_T::n_in; iacc++) {
         cache = data[iacc];
@@ -86,16 +91,9 @@ void lista_latency(
 
     if (CONFIG_T::n_iters > 1) {
         Product1: for (int kk = 0; kk < CONFIG_T::n_iters; kk++) {
-            Product2: for (int ii = 0; ii < CONFIG_T::n_in; ii++) {
-                cache = tmp[ii];
-                Product3: for(int jj = 0; jj < CONFIG_T::n_out; jj++) {
-                    int index = ii*CONFIG_T::n_out+jj;
-                    acc[jj] += CONFIG_T::template product<data_T, typename CONFIG_T::weight_t>::product(cache, weights[index]);
-                }
-            }
+            nnet::dense<data_T, res_T, CONFIG_T>(tmp, acc, weights, biases);
 
             Activation2: for (int iacc = 0; iacc < CONFIG_T::n_out; iacc++) {
-                acc[iacc] += (typename CONFIG_T::accum_t) biases[iacc];
                 tmp[iacc] = CONFIG_T::template softshrink<data_T, data_T>::activation(data[iacc] + acc[iacc], CONFIG_T::theta);
                 acc[iacc] = 0;
             }
@@ -108,14 +106,13 @@ void lista_latency(
         }
     }
 
-    // Cast to "res_t" type
-    Result: for(int ires = 0; ires < CONFIG_T::n_out; ires++){
+    Result: for (int ires = 0; ires < CONFIG_T::n_out; ires++) {
         res[ires] = cast<data_T, res_T, CONFIG_T>(tmp[ires]);
     }
 }
 
 template<class data_T, class res_T, typename CONFIG_T>
-void lista_resource_rf_leq_nin(
+void lista_resource(
     data_T    data[CONFIG_T::n_in],
     res_T     res[CONFIG_T::n_out],
     typename CONFIG_T::weight_t  weights[CONFIG_T::n_in*CONFIG_T::n_out],
@@ -126,7 +123,6 @@ void lista_resource_rf_leq_nin(
     const int multfactor = MIN(CONFIG_T::n_in,CONFIG_T::reuse_factor);
     const int multiplier_limit = DIV_ROUNDUP(CONFIG_T::n_in*CONFIG_T::n_out, multfactor);
     const int block_factor = DIV_ROUNDUP(CONFIG_T::n_in*CONFIG_T::n_out, CONFIG_T::reuse_factor);
-    const int multscale = multiplier_limit/CONFIG_T::n_out;
     const int nin = CONFIG_T::n_in;
     const int nout = CONFIG_T::n_out;
 
@@ -154,43 +150,11 @@ void lista_resource_rf_leq_nin(
     ReuseLoop:
     if (CONFIG_T::n_iters > 1) {
         for (int iter=0; iter < CONFIG_T::n_iters; iter++) {
-            for (int ir = 0; ir < rufactor; ir++) {
-                #pragma HLS PIPELINE II=1 rewind
-
-                int w_index = ir;
-                int in_index = ir;
-                int out_index = 0;
-                int acc_step = 0;
-
-                MultLoop:
-                for (int im = 0; im < block_factor; im++) {
-                    #pragma HLS UNROLL
-
-                    acc[out_index] += static_cast<typename CONFIG_T::accum_t>(
-                    CONFIG_T::template product<typename CONFIG_T::accum_t, typename CONFIG_T::weight_t>::product(
-                        tmp[in_index], weights[w_index]));
-
-                    // Increment w_index
-                    w_index += rufactor;
-                    // Increment in_index
-                    in_index += rufactor;
-                    if (in_index >= nin) {
-                        in_index = ir;
-                    }
-                    // Increment out_index
-                    if (acc_step + 1 >= multscale) {
-                        acc_step = 0;
-                        out_index++;
-                    } else {
-                        acc_step++;
-                    }
-                }
-            }
+            nnet::dense<data_T, res_T, CONFIG_T>(tmp, acc, weights, biases);
 
             Activation2: for (int iacc = 0; iacc < CONFIG_T::n_out; iacc++) {
                 #pragma HLS UNROLL
 
-                acc[iacc] += (typename CONFIG_T::accum_t) biases[iacc];
                 tmp[iacc] = CONFIG_T::template softshrink<data_T, data_T>::activation(data[iacc] + acc[iacc], CONFIG_T::theta);
                 acc[iacc] = 0;
             }
@@ -204,7 +168,6 @@ void lista_resource_rf_leq_nin(
         }
     }
 
-    // Cast to "res_t" type
     Result:
     for (int ires = 0; ires < CONFIG_T::n_out; ires++) {
         #pragma HLS UNROLL
@@ -212,50 +175,11 @@ void lista_resource_rf_leq_nin(
     }
 }
 
-template<class data_T, class res_T, typename CONFIG_T>
-void lista_resource_rf_gt_nin_rem0(
-    data_T    data[CONFIG_T::n_in],
-    res_T     res[CONFIG_T::n_out],
-    typename CONFIG_T::weight_t  weights[CONFIG_T::n_in*CONFIG_T::n_out],
-    typename CONFIG_T::bias_t    biases[CONFIG_T::n_out]
-)
-{
-
-}
-
-template<class data_T, class res_T, typename CONFIG_T>
-void lista_resource_rf_gt_nin(
-    data_T    data[CONFIG_T::n_in],
-    res_T     res[CONFIG_T::n_out],
-    typename CONFIG_T::weight_t  weights[CONFIG_T::n_in*CONFIG_T::n_out],
-    typename CONFIG_T::bias_t    biases[CONFIG_T::n_out]
-)
-{
-
-}
-
-template<class data_T, class res_T, typename CONFIG_T>
-void lista_resource(
-    data_T    data[CONFIG_T::n_in],
-    res_T     res[CONFIG_T::n_out],
-    typename CONFIG_T::weight_t  weights[CONFIG_T::n_in*CONFIG_T::n_out],
-    typename CONFIG_T::bias_t    biases[CONFIG_T::n_out])
-{
-    #pragma HLS INLINE region
-
-    if (CONFIG_T::reuse_factor <= CONFIG_T::n_in) {
-        lista_resource_rf_leq_nin<data_T, res_T, CONFIG_T>(data, res, weights, biases);
-    } else if (CONFIG_T::reuse_factor % CONFIG_T::n_in == 0) {
-        lista_resource_rf_gt_nin_rem0<data_T, res_T, CONFIG_T>(data, res, weights, biases);
-    } else {
-        lista_resource_rf_gt_nin<data_T, res_T, CONFIG_T>(data, res, weights, biases);
-    }
-}
-
 struct lista_config
 {
     // Internal data type definitions
     typedef float weight_t;
+    typedef float bias_t;
     typedef float accum_t;
 
     // Layer sizes
@@ -291,7 +215,8 @@ void lista(
     data_T    data[CONFIG_T::n_in],
     res_T     res[CONFIG_T::n_out],
     typename CONFIG_T::weight_t  weights[CONFIG_T::n_in*CONFIG_T::n_out],
-    typename CONFIG_T::bias_t    biases[CONFIG_T::n_out])
+    typename CONFIG_T::bias_t    biases[CONFIG_T::n_out]
+)
 {
     #pragma HLS inline
     if (CONFIG_T::strategy == nnet::latency) {

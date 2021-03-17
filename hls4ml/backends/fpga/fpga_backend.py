@@ -102,12 +102,6 @@ class FPGABackend(Backend):
             n_in_recr = layer.get_attr('n_out')
             n_out_recr = n_out
             return n_in, n_out, n_in_recr, n_out_recr
-        
-        if 'LISTA_Block' in layer.class_name:
-            n_in = layer.get_attr('n_in')
-            n_out = layer.get_attr('n_out')
-
-            return n_in, n_out
 
         raise Exception(f'Cannot get mult size for layer {layer.name} ({layer.class_name})')
 

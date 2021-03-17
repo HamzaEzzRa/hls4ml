@@ -1185,6 +1185,51 @@ class LISTA_Block(Layer):
         # theta_data = self.model.get_weights_data(self.name, 'theta')
         # self.add_weights_variable(name='theta', var_name='theta{index}', data=theta_data, quantizer=None)
 
+class CLISTA_Encoder(Layer):
+    _expected_attributes = [
+        Attribute('in_height'),
+        Attribute('in_width'),
+
+        Attribute('out_height'),
+        Attribute('out_width'),
+
+        Attribute('n_chan'),
+        Attribute('n_filt'),
+
+        Attribute('filt_height'),
+        Attribute('filt_width'),
+        Attribute('stride_height'),
+        Attribute('stride_width'),
+
+        Attribute('pad_top'),
+        Attribute('pad_bottom'),
+        Attribute('pad_left'),
+        Attribute('pad_right'),
+
+        # Custom clista attributes
+        Attribute('n_iters'),
+        Attribute('theta', value_type=float),
+        Attribute('positive_code', value_type=bool),
+
+        WeightAttribute('weight'),
+        WeightAttribute('bias'),
+
+        TypeAttribute('weight'),
+        TypeAttribute('bias'),
+    ]
+
+    def initialize(self):
+        if self.get_attr('data_format') == 'channels_last':
+            shape = [self.attributes['out_height'], self.attributes['out_width'], self.attributes['n_filt']]
+            dims = ['OUT_HEIGHT_{}'.format(self.index), 'OUT_WIDTH_{}'.format(self.index), 'N_FILT_{}'.format(self.index)]
+        else:
+            shape = [self.attributes['n_filt'], self.attributes['out_height'], self.attributes['out_width']]
+            dims = ['N_FILT_{}'.format(self.index), 'OUT_HEIGHT_{}'.format(self.index), 'OUT_WIDTH_{}'.format(self.index)]
+        
+        self.add_output_variable(shape, dims)
+        self.add_weights(quantizer=self.get_attr('weight_quantizer'))        
+        self.add_bias(quantizer=self.get_attr('bias_quantizer'))
+
 layer_map = {
     'Input'                  : Input,
     'InputLayer'             : Input,
@@ -1237,6 +1282,8 @@ layer_map = {
     'GarNetStack'            : GarNetStack,
     'LISTA_Block'            : LISTA_Block,
     'QLISTA_Block'           : LISTA_Block,
+    'CLISTA_Encoder'         : CLISTA_Encoder,
+    'QCLISTA_Encoder'        : CLISTA_Encoder,
     # TensorFlow-specific layers:
     'BiasAdd'                : BiasAdd,
 }

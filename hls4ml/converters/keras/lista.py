@@ -69,8 +69,6 @@ def parse_lista_layer(keras_layer, input_names, input_shapes, data_reader, confi
 
 @keras_handler('QLISTA_Block')
 def parse_qlista_layer(keras_layer, input_names, input_shapes, data_reader, config):
-    
-    
     layer, output_shape = parse_lista_layer(keras_layer, input_names, input_shapes, data_reader, config)
 
     layer['weight_quantizer'] = get_quantizer_from_config(keras_layer, 'kernel')
