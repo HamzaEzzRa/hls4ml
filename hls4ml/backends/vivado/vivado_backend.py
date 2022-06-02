@@ -7,7 +7,7 @@ from queue import Queue
 from collections.abc import Iterable
 
 from hls4ml.model.types import FixedPrecisionType, NamedType, IntegerPrecisionType
-from hls4ml.model.layers import Layer, Dense, BatchNormalization, Embedding, Conv1D, Conv2D, Conv2DBatchnorm, SeparableConv1D, SeparableConv2D, DepthwiseConv2D, Activation, ParametrizedActivation, PReLU, Softmax, Pooling1D, Pooling2D, GlobalPooling1D, GlobalPooling2D, ZeroPadding1D, ZeroPadding2D, Merge, Concatenate, Dot, Resize, Transpose, SimpleRNN, LSTM, GRU, GarNet, GarNetStack
+from hls4ml.model.layers import Layer, Dense, BatchNormalization, Embedding, Conv1D, Conv2D, Conv2DBatchnorm, SeparableConv1D, SeparableConv2D, DepthwiseConv2D, Activation, ParametrizedActivation, PReLU, Softmax, Pooling1D, Pooling2D, GlobalPooling1D, GlobalPooling2D, ZeroPadding1D, ZeroPadding2D, Merge, Concatenate, Dot, Resize, Transpose, SimpleRNN, LSTM, GRU, GarNet, GarNetStack, LISTA_Block
 from hls4ml.model.attributes import Attribute
 from hls4ml.model.optimizer import get_backend_passes, layer_optimizer, model_optimizer
 from hls4ml.model.flow import register_flow
@@ -316,3 +316,20 @@ class VivadoBackend(FPGABackend):
     @layer_optimizer(GarNetStack)
     def init_garnet_stack(self, layer):
         self.init_garnet(layer)
+
+    @layer_optimizer(LISTA_Block)
+    def init_lista(self, layer):
+        index_t = IntegerPrecisionType(width=1, signed=False)
+        compression = layer.model.config.get_compression(layer)
+        if layer.model.config.is_resource_strategy(layer):
+            n_in, n_out = self.get_layer_mult_size(layer)
+            self.set_target_reuse_factor(layer)
+            self.set_closest_reuse_factor(layer, n_in, n_out)
+            if compression:
+                layer.set_attr('strategy', 'compressed')
+                index_t = layer.get_weights('w').type.index_precision
+            else:
+                layer.set_attr('strategy', 'resource')
+        else:
+            layer.set_attr('strategy', 'latency')
+        layer.set_attr('index_t', NamedType('layer{}_index'.format(layer.index), index_t))

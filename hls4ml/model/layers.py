@@ -6,7 +6,7 @@ from hls4ml.model.types import TensorVariable, WeightVariable, CompressedWeightV
 from hls4ml.model.types import IntegerPrecisionType, FixedPrecisionType, ExponentPrecisionType
 from hls4ml.model.types import find_minimum_width
 
-from hls4ml.model.attributes import Attribute, TypeMapping, VariableMapping, WeightAttribute, TypeAttribute, ChoiceAttribute, WeightMapping
+from hls4ml.model.attributes import Attribute, TypeMapping, VariableMapping, WeightAttribute, VariableAttribute, TypeAttribute, ChoiceAttribute, WeightMapping
 from hls4ml.model.attributes import AttributeDict, AttributeMapping
 
 # TODO move this to some utility module
@@ -1121,6 +1121,43 @@ class GarNetStack(GarNet):
 
         self._output_features = self.attributes['n_out_features'][-1]
 
+class LISTA_Block(Layer):
+    _expected_attributes = [
+        Attribute('n_in'),
+        Attribute('n_out'),
+
+        Attribute('n_iters'),
+        Attribute('positive_code', value_type=bool),
+
+        Attribute('theta', value_type=float),
+
+        WeightAttribute('weight'),
+        WeightAttribute('bias'),
+
+        TypeAttribute('weight'),
+        TypeAttribute('bias'),
+    ]
+
+    def initialize(self):
+        shape = self.get_input_variable().shape[:]
+        shape[-1] = self.attributes['n_out']
+        if len(shape) > 1:
+            dims = ['N_LAYER_{}_{}'.format(i, self.index) for i in range(1, len(shape) + 1)]
+        else:
+            dims = ['N_LAYER_{}'.format(self.index)]
+        self.add_output_variable(shape, dims)
+        self.add_weights(quantizer=self.get_attr('weight_quantizer'), compression=self.model.config.get_compression(self))
+        self.add_bias(quantizer=self.get_attr('bias_quantizer'))
+
+        # w_data = self.model.get_weights_data(self.name, 'w_kernel')
+        # s_data = self.model.get_weights_data(self.name, 's_kernel')
+
+        # self.add_weights_variable(name='w', var_name='w{index}', data=w_data, quantizer=self.get_attr('w_quantizer'))
+        # self.add_weights_variable(name='s', var_name='s{index}', data=s_data, quantizer=self.get_attr('s_quantizer'))
+
+        # theta_data = self.model.get_weights_data(self.name, 'theta')
+        # self.add_weights_variable(name='theta', var_name='theta{index}', data=theta_data, quantizer=None)
+
 layer_map = {
     'Input'                  : Input,
     'InputLayer'             : Input,
@@ -1171,6 +1208,7 @@ layer_map = {
     'GRU'                    : GRU,
     'GarNet'                 : GarNet,
     'GarNetStack'            : GarNetStack,
+    'LISTA_Block'            : LISTA_Block,
     # TensorFlow-specific layers:
     'BiasAdd'                : BiasAdd,
 }
