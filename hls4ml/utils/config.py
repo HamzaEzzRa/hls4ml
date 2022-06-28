@@ -113,6 +113,7 @@ def config_from_keras_model(model, granularity='model', default_precision='ap_fi
     graph_layers = ['GarNet', 'GarNetStack']
     rnn_layers = ['SimpleRNN', 'LSTM', 'GRU']
     lista_layers = ['LISTA_Block']
+    qlista_layers = ['QLISTA_Block']
     #Define layers to skip because they're not configurable or not converted to HLS
     skip_layers = ['Dropout', 'Flatten', 'Reshape', 'Permute']
     #All supported layers
@@ -152,7 +153,7 @@ def config_from_keras_model(model, granularity='model', default_precision='ap_fi
         if layer['class_name'] == 'InputLayer':
             layer['class_name'] = 'Input'
 
-        if layer['class_name'] in qkeras_layers:
+        if layer['class_name'] in qkeras_layers + qlista_layers:
             layer['precision'] = {}
             for qname, qclass in layer['config'].items():
                 if 'quantizer' in qname.lower():
@@ -224,7 +225,7 @@ def config_from_keras_model(model, granularity='model', default_precision='ap_fi
             layer_config['Precision']['bias'] = default_precision
             layer_config['ReuseFactor'] = default_reuse_factor
         
-        elif layer['class_name'] in qkeras_layers:
+        elif layer['class_name'] in qkeras_layers + qlista_layers:
             if 'precision' in layer:
                 layer_config['Precision'] = {}
                 for name, precision in layer['precision'].items():

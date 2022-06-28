@@ -4,8 +4,7 @@ from hls4ml.backends.template import LayerConfigTemplate, FunctionCallTemplate
 
 # LISTA templates
 
-# for parametric booleans (ex: positive_code), Python will pass
-# True/False (uppercase) which is invalid syntax in C++ hence the ternary op
+# for parametric booleans, Python will pass True/False with invalid syntax in C++ hence the ternary op
 lista_config_template = """struct config{index} : nnet::lista_config {{
     static const unsigned n_in = {n_in};
     static const unsigned n_out = {n_out};
@@ -16,7 +15,7 @@ lista_config_template = """struct config{index} : nnet::lista_config {{
     static const unsigned n_nonzeros = {nonzeros};
     static const bool store_weights_in_bram = false;
     static const unsigned n_iters = {n_iters};
-    static const bool positive_code = !strcmp("{positive_code}", "True") ? true : false;
+    static const bool positive_code = strings_equal("{positive_code}", "True");
     typedef {accum_t.name} accum_t;
     typedef {bias_t.name} bias_t;
     typedef {weight_t.name} weight_t;

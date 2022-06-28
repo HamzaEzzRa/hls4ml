@@ -1212,6 +1212,7 @@ layer_map = {
     'GarNet'                 : GarNet,
     'GarNetStack'            : GarNetStack,
     'LISTA_Block'            : LISTA_Block,
+    'QLISTA_Block'           : LISTA_Block,
     # TensorFlow-specific layers:
     'BiasAdd'                : BiasAdd,
 }

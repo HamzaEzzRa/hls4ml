@@ -23,6 +23,10 @@
 #include "hls_stream.h"
 #include <math.h>
 
+constexpr bool strings_equal(char const * a, char const * b) {
+    return *a == *b && (*a == '\0' || strings_equal(a + 1, b + 1));
+}
+
 namespace nnet {
 
 template<class x_T, class theta_T>
@@ -31,7 +35,7 @@ class softshrink
     public:
     static auto activation(x_T a, theta_T theta) -> decltype(a)
     {
-        #pragma HLS INLINE
+        // #pragma HLS INLINE
         return a > theta || a < -theta ? a : (x_T)0;
     }
 };
@@ -43,7 +47,7 @@ class zeroclip
     static auto activation(x_T a) -> decltype(a)
     {
         #pragma HLS INLINE
-        return a > 0 ? a : (x_T)0;
+        return a > (x_T)0 ? a : (x_T)0;
     }
 };
 
@@ -67,8 +71,8 @@ void lista_latency(
         //   - if we have an unroll factor, limit number of multipliers
         #pragma HLS PIPELINE II=CONFIG_T::reuse_factor
 
-        // #pragma HLS ARRAY_PARTITION variable=w complete // remove this line for now, it breaks compression sometimes
-        // #pragma HLS ARRAY_PARTITION variable=s complete
+        // #pragma HLS ARRAY_PARTITION variable=weights complete // remove this line for now, it breaks compression sometimes
+        // #pragma HLS ARRAY_PARTITION variable=biases complete
         #pragma HLS ARRAY_PARTITION variable=biases complete
         #pragma HLS ARRAY_PARTITION variable=tmp complete
         #pragma HLS ARRAY_PARTITION variable=acc complete
@@ -96,8 +100,7 @@ void lista_latency(
         #pragma HLS STREAM variable=tmp depth=1
         #pragma HLS STREAM variable=acc depth=1
         if (CONFIG_T::store_weights_in_bram){
-            #pragma HLS RESOURCE variable=w core=ROM_2P_BRAM
-            #pragma HLS RESOURCE variable=s core=ROM_2P_BRAM
+            #pragma HLS RESOURCE variable=weights core=ROM_2P_BRAM
         }
     }
 
@@ -106,17 +109,20 @@ void lista_latency(
             #pragma HLS PIPELINE
         }
         cache = data[iacc];
-        tmp[iacc] = CONFIG_T::template softshrink<data_T, float>::activation(cache, CONFIG_T::theta);
+        tmp[iacc] = CONFIG_T::template softshrink<data_T, data_T>::activation(cache, CONFIG_T::theta);
     }
 
     if (CONFIG_T::n_iters > 1) {
-        for (int kk = 0; kk < CONFIG_T::n_iters; kk++) {
-            Product1: for (int ii = 0; ii < CONFIG_T::n_in; ii++) {
+        Product1: for (int kk = 0; kk < CONFIG_T::n_iters; kk++) {
+            // if (CONFIG_T::io_type == io_serial) {
+            //     #pragma HLS PIPELINE
+            // }
+            Product2: for (int ii = 0; ii < CONFIG_T::n_in; ii++) {
                 if (CONFIG_T::io_type == io_serial) {
                     #pragma HLS PIPELINE
                 }
                 cache = tmp[ii];
-                Product4: for(int jj = 0; jj < CONFIG_T::n_out; jj++) {
+                Product3: for(int jj = 0; jj < CONFIG_T::n_out; jj++) {
                     if (CONFIG_T::io_type == io_serial) {
                         int multiplier_limit  = ceil(float(CONFIG_T::n_out) / float(CONFIG_T::reuse_factor));
                         CONFIG_T::template product<data_T, typename CONFIG_T::weight_t>::limit(multiplier_limit);
@@ -131,7 +137,7 @@ void lista_latency(
                     #pragma HLS PIPELINE
                 }
                 acc[iacc] += (typename CONFIG_T::accum_t) biases[iacc];
-                tmp[iacc] = CONFIG_T::template softshrink<data_T, float>::activation(data[iacc] + acc[iacc], CONFIG_T::theta);
+                tmp[iacc] = CONFIG_T::template softshrink<data_T, data_T>::activation(data[iacc] + acc[iacc], CONFIG_T::theta);
                 acc[iacc] = 0;
             }
         }
@@ -180,7 +186,7 @@ struct lista_config
     static const unsigned n_zeros = 0;
 
     // Additional LISTA parameters
-    static constexpr double theta = 0.0;
+    static constexpr weight_t theta = 0.0;
     static const unsigned n_iters = 5;
     static const bool positive_code = false;
 
