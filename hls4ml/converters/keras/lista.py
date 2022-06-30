@@ -5,6 +5,7 @@ from hls4ml.converters.keras_to_hls import keras_handler
 
 from hls4ml.model.types import Quantizer
 from hls4ml.model.types import IntegerPrecisionType
+from hls4ml.converters.keras.qkeras import get_quantizer_from_config
 
 class BinaryQuantizer(Quantizer):
     def __init__(self, bits=2):
@@ -63,5 +64,19 @@ def parse_lista_layer(keras_layer, input_names, input_shapes, data_reader, confi
 
     output_shape = input_shapes[0][:]
     output_shape[-1] = layer['n_out']
+
+    return layer, output_shape
+
+@keras_handler('QLISTA_Block')
+def parse_qlista_layer(keras_layer, input_names, input_shapes, data_reader, config):
+    
+    
+    layer, output_shape = parse_lista_layer(keras_layer, input_names, input_shapes, data_reader, config)
+
+    layer['weight_quantizer'] = get_quantizer_from_config(keras_layer, 'kernel')
+    if keras_layer['config']['bias_quantizer'] is not None:
+        layer['bias_quantizer'] = get_quantizer_from_config(keras_layer, 'bias')
+    else:
+        layer['bias_quantizer'] = None
 
     return layer, output_shape
