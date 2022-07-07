@@ -106,7 +106,7 @@ void lista_latency(
 
     Activation1: for (int iacc = 0; iacc < CONFIG_T::n_in; iacc++) {
         if (CONFIG_T::io_type == io_serial) {
-            #pragma HLS PIPELINE
+            #pragma HLS UNROLL
         }
         cache = data[iacc];
         tmp[iacc] = CONFIG_T::template softshrink<data_T, data_T>::activation(cache, CONFIG_T::theta);
@@ -114,9 +114,9 @@ void lista_latency(
 
     if (CONFIG_T::n_iters > 1) {
         Product1: for (int kk = 0; kk < CONFIG_T::n_iters; kk++) {
-            // if (CONFIG_T::io_type == io_serial) {
-            //     #pragma HLS PIPELINE
-            // }
+            if (CONFIG_T::io_type == io_serial) {
+                #pragma HLS PIPELINE
+            }
             Product2: for (int ii = 0; ii < CONFIG_T::n_in; ii++) {
                 if (CONFIG_T::io_type == io_serial) {
                     #pragma HLS PIPELINE
@@ -134,7 +134,7 @@ void lista_latency(
 
             Activation2: for (int iacc = 0; iacc < CONFIG_T::n_out; iacc++) {
                 if (CONFIG_T::io_type == io_serial) {
-                    #pragma HLS PIPELINE
+                    #pragma HLS UNROLL
                 }
                 acc[iacc] += (typename CONFIG_T::accum_t) biases[iacc];
                 tmp[iacc] = CONFIG_T::template softshrink<data_T, data_T>::activation(data[iacc] + acc[iacc], CONFIG_T::theta);
@@ -145,6 +145,9 @@ void lista_latency(
 
     if (CONFIG_T::positive_code) {
         Clip1: for (int ii = 0; ii < CONFIG_T::n_out; ii++) {
+            if (CONFIG_T::io_type == io_serial){
+                #pragma HLS UNROLL
+            }
             tmp[ii] = CONFIG_T::template zeroclip<data_T>::activation(tmp[ii]);
         }
     }
@@ -159,24 +162,6 @@ void lista_latency(
 }
 
 template<class data_T, class res_T, typename CONFIG_T>
-void lista_resource(
-    data_T    data[CONFIG_T::n_in],
-    res_T     res[CONFIG_T::n_out],
-    typename CONFIG_T::weight_t  weights[CONFIG_T::n_in*CONFIG_T::n_out],
-    typename CONFIG_T::bias_t    biases[CONFIG_T::n_out])
-{
-    #pragma HLS INLINE region
-
-    if (CONFIG_T::reuse_factor <= CONFIG_T::n_in) {
-        lista_resource_rf_leq_nin<data_T, res_T, CONFIG_T>(data, res, weights, biases);
-    } else if (CONFIG_T::reuse_factor % CONFIG_T::n_in == 0) {
-        lista_resource_rf_gt_nin_rem0<data_T, res_T, CONFIG_T>(data, res, weights, biases);
-    } else {
-        lista_resource_rf_gt_nin<data_T, res_T, CONFIG_T>(data, res, weights, biases);
-    }
-}
-
-template<class data_T, class res_T, typename CONFIG_T>
 void lista_resource_rf_leq_nin(
     data_T    data[CONFIG_T::n_in],
     res_T     res[CONFIG_T::n_out],
@@ -184,7 +169,94 @@ void lista_resource_rf_leq_nin(
     typename CONFIG_T::bias_t    biases[CONFIG_T::n_out]
 )
 {
+    const int rufactor = CONFIG_T::reuse_factor;
+    const int multfactor = MIN(CONFIG_T::n_in,CONFIG_T::reuse_factor);
+    const int multiplier_limit = DIV_ROUNDUP(CONFIG_T::n_in*CONFIG_T::n_out, multfactor);
+    const int block_factor = DIV_ROUNDUP(CONFIG_T::n_in*CONFIG_T::n_out, CONFIG_T::reuse_factor);
+    const int multscale = multiplier_limit/CONFIG_T::n_out;
+    const int nin = CONFIG_T::n_in;
+    const int nout = CONFIG_T::n_out;
 
+    assert((multiplier_limit % nout == 0 || rufactor >= nin) && "The current Reuse Factor is not allowed");
+    assert((multiplier_limit == block_factor) && "This function is correct only for RF <= N_IN");
+
+    #pragma HLS function_instantiate variable=weights,biases
+    //#pragma HLS RESOURCE variable=weights core=RAM_2P_BRAM Commenting out the deisgnation HLS seems to choose correctly
+    #pragma HLS ARRAY_RESHAPE   variable=weights block factor=block_factor
+    #pragma HLS ARRAY_PARTITION variable=biases complete
+
+    typename CONFIG_T::accum_t tmp[CONFIG_T::n_in];
+    typename CONFIG_T::accum_t acc[CONFIG_T::n_out];
+
+    Activation1:
+    for (int iacc = 0; iacc < CONFIG_T::n_in; iacc++) {
+        #pragma HLS UNROLL
+
+        tmp[iacc] = static_cast<typename CONFIG_T::accum_t>(
+            CONFIG_T::template softshrink<data_T, data_T>::activation(
+                data[iacc], CONFIG_T::theta));
+    }
+
+    ReuseLoop:
+    for (int ir = 0; ir < rufactor; ir++) {
+        #pragma HLS PIPELINE II=1 rewind
+
+        int w_index = ir;
+        int in_index = ir;
+        int out_index = 0;
+        int acc_step = 0;
+
+        MultLoop:
+        if (CONFIG_T::n_iters > 1) {
+            for (int iter=0; iter < CONFIG_T::n_iters; iter++) {
+                for (int im = 0; im < block_factor; im++) {
+                    #pragma HLS UNROLL
+
+                    // Dot product
+                    acc[out_index] += static_cast<typename CONFIG_T::accum_t>(
+                    CONFIG_T::template product<typename CONFIG_T::accum_t, typename CONFIG_T::weight_t>::product(
+                        tmp[in_index], weights[w_index]));
+
+                    // Increment w_index
+                    w_index += rufactor;
+                    // Increment in_index
+                    in_index += rufactor;
+                    if (in_index >= nin) {
+                        in_index = ir;
+                    }
+                    // Increment out_index
+                    if (acc_step + 1 >= multscale) {
+                        acc_step = 0;
+                        out_index++;
+                    } else {
+                        acc_step++;
+                    }
+                }
+
+                Activation2: for (int iacc = 0; iacc < CONFIG_T::n_out; iacc++) {
+                    #pragma HLS UNROLL
+
+                    acc[iacc] += (typename CONFIG_T::accum_t) biases[iacc];
+                    tmp[iacc] = CONFIG_T::template softshrink<data_T, data_T>::activation(data[iacc] + acc[iacc], CONFIG_T::theta);
+                    acc[iacc] = 0;
+                }
+            }
+        }
+    }
+
+    if (CONFIG_T::positive_code) {
+        Clip1: for (int ii = 0; ii < CONFIG_T::n_out; ii++) {
+            #pragma HLS UNROLL
+            tmp[ii] = CONFIG_T::template zeroclip<data_T>::activation(tmp[ii]);
+        }
+    }
+
+    // Cast to "res_t" type
+    Result:
+    for (int ires = 0; ires < CONFIG_T::n_out; ires++) {
+        #pragma HLS UNROLL
+        res[ires] = cast<data_T, res_T, CONFIG_T>(tmp[ires]);
+    }
 }
 
 template<class data_T, class res_T, typename CONFIG_T>
@@ -207,6 +279,24 @@ void lista_resource_rf_gt_nin(
 )
 {
 
+}
+
+template<class data_T, class res_T, typename CONFIG_T>
+void lista_resource(
+    data_T    data[CONFIG_T::n_in],
+    res_T     res[CONFIG_T::n_out],
+    typename CONFIG_T::weight_t  weights[CONFIG_T::n_in*CONFIG_T::n_out],
+    typename CONFIG_T::bias_t    biases[CONFIG_T::n_out])
+{
+    #pragma HLS INLINE region
+
+    if (CONFIG_T::reuse_factor <= CONFIG_T::n_in) {
+        lista_resource_rf_leq_nin<data_T, res_T, CONFIG_T>(data, res, weights, biases);
+    } else if (CONFIG_T::reuse_factor % CONFIG_T::n_in == 0) {
+        lista_resource_rf_gt_nin_rem0<data_T, res_T, CONFIG_T>(data, res, weights, biases);
+    } else {
+        lista_resource_rf_gt_nin<data_T, res_T, CONFIG_T>(data, res, weights, biases);
+    }
 }
 
 struct lista_config
