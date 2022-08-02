@@ -35,7 +35,7 @@ class softshrink
     public:
     static auto activation(x_T a, theta_T theta) -> decltype(a)
     {
-        // #pragma HLS INLINE
+        #pragma HLS INLINE
         return a > theta || a < -theta ? a : (x_T)0;
     }
 };
@@ -187,32 +187,32 @@ void lista_resource_rf_leq_nin(
 
     typename CONFIG_T::accum_t tmp[CONFIG_T::n_in];
     typename CONFIG_T::accum_t acc[CONFIG_T::n_out];
+    #pragma HLS ARRAY_PARTITION variable=tmp complete
+    #pragma HLS ARRAY_PARTITION variable=acc complete
 
     Activation1:
-    for (int iacc = 0; iacc < CONFIG_T::n_in; iacc++) {
+    for (int iacc = 0; iacc < nin; iacc++) {
         #pragma HLS UNROLL
-
         tmp[iacc] = static_cast<typename CONFIG_T::accum_t>(
             CONFIG_T::template softshrink<data_T, data_T>::activation(
                 data[iacc], CONFIG_T::theta));
     }
 
     ReuseLoop:
-    for (int ir = 0; ir < rufactor; ir++) {
-        #pragma HLS PIPELINE II=1 rewind
+    if (CONFIG_T::n_iters > 1) {
+        for (int iter=0; iter < CONFIG_T::n_iters; iter++) {
+            for (int ir = 0; ir < rufactor; ir++) {
+                #pragma HLS PIPELINE II=1 rewind
 
-        int w_index = ir;
-        int in_index = ir;
-        int out_index = 0;
-        int acc_step = 0;
+                int w_index = ir;
+                int in_index = ir;
+                int out_index = 0;
+                int acc_step = 0;
 
-        MultLoop:
-        if (CONFIG_T::n_iters > 1) {
-            for (int iter=0; iter < CONFIG_T::n_iters; iter++) {
+                MultLoop:
                 for (int im = 0; im < block_factor; im++) {
                     #pragma HLS UNROLL
 
-                    // Dot product
                     acc[out_index] += static_cast<typename CONFIG_T::accum_t>(
                     CONFIG_T::template product<typename CONFIG_T::accum_t, typename CONFIG_T::weight_t>::product(
                         tmp[in_index], weights[w_index]));
@@ -232,14 +232,14 @@ void lista_resource_rf_leq_nin(
                         acc_step++;
                     }
                 }
+            }
 
-                Activation2: for (int iacc = 0; iacc < CONFIG_T::n_out; iacc++) {
-                    #pragma HLS UNROLL
+            Activation2: for (int iacc = 0; iacc < CONFIG_T::n_out; iacc++) {
+                #pragma HLS UNROLL
 
-                    acc[iacc] += (typename CONFIG_T::accum_t) biases[iacc];
-                    tmp[iacc] = CONFIG_T::template softshrink<data_T, data_T>::activation(data[iacc] + acc[iacc], CONFIG_T::theta);
-                    acc[iacc] = 0;
-                }
+                acc[iacc] += (typename CONFIG_T::accum_t) biases[iacc];
+                tmp[iacc] = CONFIG_T::template softshrink<data_T, data_T>::activation(data[iacc] + acc[iacc], CONFIG_T::theta);
+                acc[iacc] = 0;
             }
         }
     }
