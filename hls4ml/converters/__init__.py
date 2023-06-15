@@ -1,50 +1,54 @@
-from __future__ import absolute_import
-import os
-import yaml
 import importlib
+import os
 import warnings
 
-from hls4ml.utils.config import create_config
-from hls4ml.converters.keras_to_hls import keras_to_hls, get_supported_keras_layers, register_keras_layer_handler
+import yaml
 
-#----------Make converters available if the libraries can be imported----------#
+from hls4ml.converters.keras_to_hls import KerasFileReader  # noqa: F401
+from hls4ml.converters.keras_to_hls import KerasModelReader  # noqa: F401
+from hls4ml.converters.keras_to_hls import KerasReader  # noqa: F401
+from hls4ml.converters.keras_to_hls import get_supported_keras_layers  # noqa: F401
+from hls4ml.converters.keras_to_hls import parse_keras_model  # noqa: F401
+from hls4ml.converters.keras_to_hls import keras_to_hls, register_keras_layer_handler
+from hls4ml.utils.config import create_config
+
+# ----------Make converters available if the libraries can be imported----------#
 try:
-    from hls4ml.converters.pytorch_to_hls import pytorch_to_hls, get_supported_pytorch_layers, register_pytorch_layer_handler
+    from hls4ml.converters.pytorch_to_hls import (  # noqa: F401
+        get_supported_pytorch_layers,
+        pytorch_to_hls,
+        register_pytorch_layer_handler,
+    )
+
     __pytorch_enabled__ = True
 except ImportError:
-    warnings.warn("WARNING: Pytorch converter is not enabled!")
+    warnings.warn("WARNING: Pytorch converter is not enabled!", stacklevel=1)
     __pytorch_enabled__ = False
 
 try:
-    from hls4ml.converters.onnx_to_hls import onnx_to_hls, get_supported_onnx_layers, register_onnx_layer_handler
+    from hls4ml.converters.onnx_to_hls import get_supported_onnx_layers  # noqa: F401
+    from hls4ml.converters.onnx_to_hls import onnx_to_hls, register_onnx_layer_handler
+
     __onnx_enabled__ = True
 except ImportError:
-    warnings.warn("WARNING: ONNX converter is not enabled!")
+    warnings.warn("WARNING: ONNX converter is not enabled!", stacklevel=1)
     __onnx_enabled__ = False
 
-try:
-    from hls4ml.converters.tf_to_hls import tf_to_hls
-    __tensorflow_enabled__ = True
-except ImportError:
-    warnings.warn("WARNING: Tensorflow converter is not enabled!")
-    __tensorflow_enabled__ = False
-
-#----------Layer handling register----------#
+# ----------Layer handling register----------#
 model_types = ['keras', 'pytorch', 'onnx']
 
 for model_type in model_types:
-    for module in os.listdir(os.path.dirname(__file__) + '/{}'.format(model_type)):
+    for module in os.listdir(os.path.dirname(__file__) + f'/{model_type}'):
         if module == '__init__.py' or module[-3:] != '.py':
             continue
         try:
-            lib = importlib.import_module(__name__ + '.{}.'.format(model_type) + module[:-3])
-            for name, func in list(lib.__dict__.items()):
+            lib = importlib.import_module(__name__ + f'.{model_type}.' + module[:-3])
+            for _, func in list(lib.__dict__.items()):
                 # if 'func' is callable (i.e., function, class...)
                 # and has 'handles' attribute
                 # and is defined in this module (i.e., not imported)
                 if callable(func) and hasattr(func, 'handles') and func.__module__ == lib.__name__:
                     for layer in func.handles:
-
                         if model_type == 'keras':
                             register_keras_layer_handler(layer, func)
                         elif model_type == 'pytorch':
@@ -52,8 +56,10 @@ for model_type in model_types:
                         elif model_type == 'onnx':
                             register_onnx_layer_handler(layer, func)
 
-        except ImportError:
+        except ImportError as err:
+            print(f'WARNING: Failed to import handlers from {module}: {err.msg}.')
             continue
+
 
 def parse_yaml_config(config_file):
     """Parse conversion configuration from the provided YAML file.
@@ -82,25 +88,27 @@ def parse_yaml_config(config_file):
     Returns:
         dict: Parsed configuration.
     """
+
     def construct_keras_model(loader, node):
         from tensorflow.keras.models import load_model
 
         model_str = loader.construct_scalar(node)
         return load_model(model_str)
 
-    yaml.add_constructor(u'!keras_model', construct_keras_model, Loader=yaml.SafeLoader)
+    yaml.add_constructor('!keras_model', construct_keras_model, Loader=yaml.SafeLoader)
 
     print('Loading configuration from', config_file)
-    with open(config_file, 'r') as file:
+    with open(config_file) as file:
         parsed_config = yaml.safe_load(file)
     return parsed_config
+
 
 def convert_from_config(config):
     """Convert to hls4ml model based on the provided configuration.
 
     Arguments:
         config: A string containing the path to the YAML configuration file on
-            the filesystem or a dict containig the parsed configuration.
+            the filesystem or a dict containing the parsed configuration.
 
     Returns:
         ModelGraph: hls4ml model.
@@ -122,15 +130,11 @@ def convert_from_config(config):
             model = pytorch_to_hls(yamlConfig)
         else:
             raise Exception("PyTorch not found. Please install PyTorch.")
-    elif 'TensorFlowModel' in yamlConfig:
-        if __tensorflow_enabled__:
-            model = tf_to_hls(yamlConfig)
-        else:
-            raise Exception("TensorFlow not found. Please install TensorFlow.")
     else:
         model = keras_to_hls(yamlConfig)
 
     return model
+
 
 def _check_hls_config(config, hls_config):
     """
@@ -154,6 +158,7 @@ def _check_hls_config(config, hls_config):
 
     return
 
+
 def _check_model_config(model_config):
     if model_config is not None:
         if not all(k in model_config for k in ('Precision', 'ReuseFactor')):
@@ -165,9 +170,19 @@ def _check_model_config(model_config):
 
     return model_config
 
-def convert_from_keras_model(model, output_dir='my-hls-test', project_name='myproject', input_data_tb=None,
-                             output_data_tb=None, backend='Vivado', hls_config={}, **kwargs):
-    """Convert to hls4ml model based on the provided configuration.
+
+def convert_from_keras_model(
+    model,
+    output_dir='my-hls-test',
+    project_name='myproject',
+    input_data_tb=None,
+    output_data_tb=None,
+    backend='Vivado',
+    hls_config=None,
+    **kwargs,
+):
+    """Convert Keras model to hls4ml model based on the provided configuration.
+
     Args:
         model: Keras model to convert
         output_dir (str, optional): Output directory of the generated HLS
@@ -191,23 +206,23 @@ def convert_from_keras_model(model, output_dir='my-hls-test', project_name='mypr
             'io_parallel' or 'io_stream'. Defaults to 'io_parallel'.
         hls_config (dict, optional): The HLS config.
         kwargs** (dict, optional): Additional parameters that will be used to create the config of the specified backend
+
     Raises:
-        Exception: If precision and reuse factor are not present in 'hls_config'
+        Exception: If precision and reuse factor are not present in 'hls_config'.
+
     Returns:
         ModelGraph: hls4ml model.
     """
 
-    config = create_config(
-        output_dir=output_dir,
-        project_name=project_name,
-        backend=backend,
-        **kwargs
-    )
+    config = create_config(output_dir=output_dir, project_name=project_name, backend=backend, **kwargs)
 
     config['KerasModel'] = model
     config['InputData'] = input_data_tb
     config['OutputPredictions'] = output_data_tb
     config['HLSConfig'] = {}
+
+    if hls_config is None:
+        hls_config = {}
 
     model_config = hls_config.get('Model', None)
     config['HLSConfig']['Model'] = _check_model_config(model_config)
@@ -217,70 +232,58 @@ def convert_from_keras_model(model, output_dir='my-hls-test', project_name='mypr
     return keras_to_hls(config)
 
 
-def convert_from_pytorch_model(model, input_shape, output_dir='my-hls-test', project_name='myproject', input_data_tb=None,
-                             output_data_tb=None, backend='Vivado', hls_config={}, **kwargs):
+def convert_from_pytorch_model(
+    model,
+    input_shape,
+    output_dir='my-hls-test',
+    project_name='myproject',
+    input_data_tb=None,
+    output_data_tb=None,
+    backend='Vivado',
+    hls_config=None,
+    **kwargs,
+):
+    """Convert PyTorch model to hls4ml model based on the provided configuration.
+
+    Args:
+        model: PyTorch model to conert.
+        input_shape (list): The shape of the input tensor.
+        output_dir (str, optional): Output directory of the generated HLS project. Defaults to 'my-hls-test'.
+        project_name (str, optional): Name of the HLS project. Defaults to 'myproject'.
+        input_data_tb (str, optional): String representing the path of input data in .npy or .dat format that will be
+            used during csim and cosim. Defaults to None.
+        output_data_tb (str, optional): String representing the path of output data in .npy or .dat format that will be
+            used during csim and cosim. Defaults to None.
+        backend (str, optional): Name of the backend to use, e.g., 'Vivado' or 'Quartus'. Defaults to 'Vivado'.
+        board (str, optional): One of target boards specified in `supported_board.json` file. If set to `None` a default
+            device of a backend will be used. See documentation of the backend used.
+        part (str, optional): The FPGA part. If set to `None` a default part of a backend will be used.
+            See documentation of the backend used. Note that if `board` is specified, the part associated to that board
+            will overwrite any part passed as a parameter.
+        clock_period (int, optional): Clock period of the design.
+            Defaults to 5.
+        io_type (str, optional): Type of implementation used. One of
+            'io_parallel' or 'io_stream'. Defaults to 'io_parallel'.
+        hls_config (dict, optional): The HLS config.
+        kwargs** (dict, optional): Additional parameters that will be used to create the config of the specified backend.
+
+    Raises:
+        Exception: If precision and reuse factor are not present in 'hls_config'.
+
+    Returns:
+        ModelGraph: hls4ml model.
     """
 
-    Convert a Pytorch model to a hls model.
-
-    Parameters
-    ----------
-    model : Pytorch model object.
-        Model to be converted to hls model object.
-    input_shape : @todo: to be filled
-    output_dir (str, optional): Output directory of the generated HLS
-        project. Defaults to 'my-hls-test'.
-    project_name (str, optional): Name of the HLS project.
-        Defaults to 'myproject'.
-    input_data_tb (str, optional): String representing the path of input data in .npy or .dat format that will be
-        used during csim and cosim.
-    output_data_tb (str, optional): String representing the path of output data in .npy or .dat format that will be
-        used during csim and cosim.
-    backend (str, optional): Name of the backend to use, e.g., 'Vivado'
-        or 'Quartus'.
-    board (str, optional): One of target boards specified in `supported_board.json` file. If set to `None` a default
-        device of a backend will be used. See documentation of the backend used.
-    part (str, optional): The FPGA part. If set to `None` a default part of a backend will be used.
-        See documentation of the backend used. Note that if `board` is specified, the part associated to that board
-        will overwrite any part passed as a parameter.
-    clock_period (int, optional): Clock period of the design.
-        Defaults to 5.
-    io_type (str, optional): Type of implementation used. One of
-        'io_parallel' or 'io_stream'. Defaults to 'io_parallel'.
-    hls_config (dict, optional): The HLS config.
-    kwargs** (dict, optional): Additional parameters that will be used to create the config of the specified backend
-
-    Returns
-    -------
-    ModelGraph : hls4ml model object.
-
-    See Also
-    --------
-    hls4ml.convert_from_keras_model, hls4ml.convert_from_onnx_model
-
-    Examples
-    --------
-    >>> import hls4ml
-    >>> config = hls4ml.utils.config_from_pytorch_model(model, granularity='model')
-    >>> hls_model = hls4ml.converters.convert_from_pytorch_model(model, hls_config=config)
-
-    Notes
-    -----
-    Only sequential Pytorch models are supported for now.
-    """
-
-    config = create_config(
-        output_dir=output_dir,
-        project_name=project_name,
-        backend=backend,
-        **kwargs
-    )
+    config = create_config(output_dir=output_dir, project_name=project_name, backend=backend, **kwargs)
 
     config['PytorchModel'] = model
     config['InputShape'] = input_shape
     config['InputData'] = input_data_tb
     config['OutputPredictions'] = output_data_tb
     config['HLSConfig'] = {}
+
+    if hls_config is None:
+        hls_config = {}
 
     model_config = hls_config.get('Model', None)
     config['HLSConfig']['Model'] = _check_model_config(model_config)
@@ -290,65 +293,58 @@ def convert_from_pytorch_model(model, input_shape, output_dir='my-hls-test', pro
     return pytorch_to_hls(config)
 
 
-def convert_from_onnx_model(model, output_dir='my-hls-test', project_name='myproject', input_data_tb=None,
-                             output_data_tb=None, backend='Vivado',
-                             hls_config={}, **kwargs):
+def convert_from_onnx_model(
+    model,
+    output_dir='my-hls-test',
+    project_name='myproject',
+    input_data_tb=None,
+    output_data_tb=None,
+    backend='Vivado',
+    hls_config=None,
+    **kwargs,
+):
+    """Convert Keras model to hls4ml model based on the provided configuration.
+
+    Args:
+        model: ONNX model to convert.
+        output_dir (str, optional): Output directory of the generated HLS
+            project. Defaults to 'my-hls-test'.
+        project_name (str, optional): Name of the HLS project.
+            Defaults to 'myproject'.
+        input_data_tb (str, optional): String representing the path of input data in .npy or .dat format that will be
+            used during csim and cosim.
+        output_data_tb (str, optional): String representing the path of output data in .npy or .dat format that will be
+            used during csim and cosim.
+        backend (str, optional): Name of the backend to use, e.g., 'Vivado'
+            or 'Quartus'.
+        board (str, optional): One of target boards specified in `supported_board.json` file. If set to `None` a default
+            device of a backend will be used. See documentation of the backend used.
+        part (str, optional): The FPGA part. If set to `None` a default part of a backend will be used.
+            See documentation of the backend used. Note that if `board` is specified, the part associated to that board
+            will overwrite any part passed as a parameter.
+        clock_period (int, optional): Clock period of the design.
+            Defaults to 5.
+        io_type (str, optional): Type of implementation used. One of
+            'io_parallel' or 'io_stream'. Defaults to 'io_parallel'.
+        hls_config (dict, optional): The HLS config.
+        kwargs** (dict, optional): Additional parameters that will be used to create the config of the specified backend
+
+    Raises:
+        Exception: If precision and reuse factor are not present in 'hls_config'.
+
+    Returns:
+        ModelGraph: hls4ml model.
     """
 
-    Convert an ONNX model to a hls model.
-
-    Parameters
-    ----------
-    model : ONNX model object.
-        Model to be converted to hls model object.
-    output_dir (str, optional): Output directory of the generated HLS
-        project. Defaults to 'my-hls-test'.
-    project_name (str, optional): Name of the HLS project.
-        Defaults to 'myproject'.
-    input_data_tb (str, optional): String representing the path of input data in .npy or .dat format that will be
-        used during csim and cosim.
-    output_data_tb (str, optional): String representing the path of output data in .npy or .dat format that will be
-        used during csim and cosim.
-    backend (str, optional): Name of the backend to use, e.g., 'Vivado'
-        or 'Quartus'.
-    board (str, optional): One of target boards specified in `supported_board.json` file. If set to `None` a default
-        device of a backend will be used. See documentation of the backend used.
-    part (str, optional): The FPGA part. If set to `None` a default part of a backend will be used.
-        See documentation of the backend used. Note that if `board` is specified, the part associated to that board
-        will overwrite any part passed as a parameter.
-    clock_period (int, optional): Clock period of the design.
-        Defaults to 5.
-    io_type (str, optional): Type of implementation used. One of
-        'io_parallel' or 'io_stream'. Defaults to 'io_parallel'.
-    hls_config (dict, optional): The HLS config.
-    kwargs** (dict, optional): Additional parameters that will be used to create the config of the specified backend
-
-    Returns
-    -------
-    ModelGraph : hls4ml model object.
-
-    See Also
-    --------
-    hls4ml.convert_from_keras_model, hls4ml.convert_from_pytorch_model
-
-    Examples
-    --------
-    >>> import hls4ml
-    >>> config = hls4ml.utils.config_from_onnx_model(model, granularity='model')
-    >>> hls_model = hls4ml.converters.convert_from_onnx_model(model, hls_config=config)
-    """
-
-    config = create_config(
-        output_dir=output_dir,
-        project_name=project_name,
-        backend=backend,
-        **kwargs
-    )
+    config = create_config(output_dir=output_dir, project_name=project_name, backend=backend, **kwargs)
 
     config['OnnxModel'] = model
     config['InputData'] = input_data_tb
     config['OutputPredictions'] = output_data_tb
     config['HLSConfig'] = {}
+
+    if hls_config is None:
+        hls_config = {}
 
     model_config = hls_config.get('Model', None)
     config['HLSConfig']['Model'] = _check_model_config(model_config)
@@ -356,5 +352,3 @@ def convert_from_onnx_model(model, output_dir='my-hls-test', project_name='mypro
     _check_hls_config(config, hls_config)
 
     return onnx_to_hls(config)
-
-
