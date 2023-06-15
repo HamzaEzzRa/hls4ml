@@ -175,3 +175,16 @@ class PReLUFunctionTemplate(FunctionCallTemplate):
         params['config'] = '{}_config{}'.format(node.get_attr('activation'), node.index)
 
         return self.template.format(**params)
+
+class SoftshrinkFunctionTemplate(FunctionCallTemplate):
+    def __init__(self):
+        super().__init__(PReLU, include_header=activ_include_list)
+        self.template = param_activ_function_template
+
+    def format(self, node):
+        params = self._default_function_params(node)
+        params['activation'] = node.get_attr('activation').lower()
+        params['param'] = node.get_weights('theta').name
+        params['config'] = '{}_config{}'.format(node.get_attr('activation'), node.index)
+
+        return self.template.format(**params)

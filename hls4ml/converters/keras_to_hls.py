@@ -242,7 +242,7 @@ def keras_to_hls(config):
     #Define layers to skip for conversion to HLS
     skip_layers = ['Dropout']
     # Activation layers
-    activation_layers = ['Activation', 'LeakyReLU', 'ThresholdedReLU', 'ELU', 'PReLU', 'Softmax', 'TernaryTanh']
+    activation_layers = ['Activation', 'LeakyReLU', 'ThresholdedReLU', 'Softshrink', 'ELU', 'PReLU', 'Softmax', 'TernaryTanh']
     # Recurrent layers
     recurrent_layers = ['SimpleRNN', 'LSTM', 'GRU']
     #All supported layers

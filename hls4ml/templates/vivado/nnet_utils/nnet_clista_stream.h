@@ -19,11 +19,11 @@
 
 #include "nnet_common.h"
 #include "nnet_mult.h"
-#include "nnet_conv2d.h"
-// #include "nnet_conv2d_stream.h"
+// #include "nnet_conv2d.h"
 // #include "nnet_clista.h"
 #include "nnet_helpers.h"
 #include "hls_stream.h"
+#include "nnet_conv2d_stream.h"
 #include <math.h>
 
 namespace nnet {
@@ -91,62 +91,92 @@ namespace nnet {
 
 template<class data_T, class res_T, typename CONFIG_T>
 void clista_latency(
-    hls::stream<data_T> &data_stream,
-    hls::stream<res_T> &res_stream,
+    hls::stream<data_T> &_data_stream,
+    hls::stream<res_T> &_res_stream,
     typename CONFIG_T::weight_t weights[CONFIG_T::filt_height * CONFIG_T::filt_width * CONFIG_T::n_chan * CONFIG_T::n_filt],
     typename CONFIG_T::bias_t   biases[CONFIG_T::n_filt]
 )
 {
-    const int in_size = CONFIG_T::in_height * CONFIG_T::in_width * CONFIG_T::n_chan;
-    const int out_size = CONFIG_T::out_height * CONFIG_T::out_width * CONFIG_T::n_filt;
+    const int in_size = _data_stream.size();
+    const int out_size = _res_stream.size();
+
+    typename data_T::value_type _data[in_size];
+    typename res_T::value_type _res[out_size];
     
-    typename data_T::value_type data[in_size];
-    typename res_T::value_type res[out_size];
-    
-    #pragma HLS ARRAY_PARTITION variable=data complete
-    #pragma HLS ARRAY_PARTITION variable=res complete
+    #pragma HLS ARRAY_PARTITION variable=_data complete
+    #pragma HLS ARRAY_PARTITION variable=_res complete
 
     DataPrepare: for (int i_in = 0; i_in < in_size / data_T::size; i_in++) {
         if (in_size / data_T::size > 1) {
             #pragma HLS PIPELINE
         }
-        data_T data_pack = data_stream.read();
+        data_T data_pack = _data_stream.read();
         DataPack: for (int i_pack = 0; i_pack < data_T::size; i_pack++) {
             #pragma HLS UNROLL
-            data[i_in * data_T::size + i_pack] = data_pack[i_pack];
+            _data[i_in * data_T::size + i_pack] = data_pack[i_pack];
         }
     }
 
     typename data_T::value_type tmp[in_size];
     typename data_T::value_type acc[out_size];
 
-    // #pragma HLS ARRAY_PARTITION variable=tmp complete
-    // #pragma HLS ARRAY_PARTITION variable=acc complete
+    #pragma HLS ARRAY_PARTITION variable=tmp complete
+    #pragma HLS ARRAY_PARTITION variable=acc complete
 
     typename data_T::value_type cache;
-    Activation1: for (int iacc = 0; iacc < in_size; iacc++) {
-        cache = data[iacc];
-        tmp[iacc] = CONFIG_T::template softshrink<typename data_T::value_type, typename data_T::value_type>::activation(cache, CONFIG_T::theta);
+    Activation1: for (int iact = 0; iact < in_size; iact++) {
+        cache = _data[iact];
+        tmp[iact] = CONFIG_T::template softshrink<typename data_T::value_type, typename data_T::value_type>::activation(cache, CONFIG_T::theta);
     }
 
     if (CONFIG_T::n_iters > 1) {
         Product1: for (int kk = 0; kk < CONFIG_T::n_iters; kk++) {
-            for (int iacc = 0; iacc < in_size; iacc++) {
-                tmp[iacc] = tmp[iacc] + data[iacc];
+            for (int iact = 0; iact < in_size; iact++) {
+                tmp[iact] = tmp[iact] + _data[iact];
             }
 
-            nnet::conv_2d_cl<typename data_T::value_type, typename res_T::value_type, CONFIG_T>(tmp, acc, weights, biases);
+            hls::stream<data_T> *acc_stream = new hls::stream<data_T>();
+            hls::stream<data_T> *tmp_stream = new hls::stream<data_T>();
+            TmpWrite: for(unsigned i_in = 0; i_in < in_size / data_T::size; i_in++) {
+                if (in_size / data_T::size > 1) {
+                    #pragma HLS PIPELINE
+                }
+                data_T tmp_pack;
+                #pragma HLS DATA_PACK variable=tmp_pack
+                TmpPack: for (int i_pack = 0; i_pack < data_T::size; i_pack++) {
+                    #pragma HLS UNROLL
+                    tmp_pack[i_pack] = tmp[i_in * data_T::size + i_pack];
+                }
+                tmp_stream->write(tmp_pack);
+            }
 
-            Activation2: for (int iacc = 0; iacc < out_size; iacc++) {
-                tmp[iacc] = CONFIG_T::template softshrink<typename data_T::value_type, typename data_T::value_type>::activation(acc[iacc], CONFIG_T::theta);
+            nnet::conv_2d_buffer_cl<data_T, data_T, CONFIG_T>(*tmp_stream, *acc_stream, weights, biases);
+
+            AccPrepare: for (int i_out = 0; i_out < out_size / data_T::size; i_out++) {
+                if (out_size / data_T::size > 1) {
+                    #pragma HLS PIPELINE
+                }
+                data_T acc_pack = acc_stream->read();
+                AccPack: for (int i_pack = 0; i_pack < data_T::size; i_pack++) {
+                    #pragma HLS UNROLL
+                    acc[i_out * data_T::size + i_pack] = acc_pack[i_pack];
+                }
+            }
+
+            Activation2: for (int iact = 0; iact < out_size; iact++) {
+                tmp[iact] = CONFIG_T::template softshrink<typename data_T::value_type, typename data_T::value_type>::activation(acc[iact], CONFIG_T::theta);
             }
         }
     }
 
     if (CONFIG_T::positive_code) {
         Clip1: for (int ii = 0; ii < out_size; ii++) {
-            res[ii] = CONFIG_T::template zeroclip<typename data_T::value_type>::activation(tmp[ii]);
+            _res[ii] = CONFIG_T::template zeroclip<typename data_T::value_type>::activation(tmp[ii]);
         }
+    }
+
+    Result: for (int ires = 0; ires < out_size; ires++) {
+        _res[ires] = cast<data_T, res_T, CONFIG_T>(tmp[ires]);
     }
 
     ResWrite: for(unsigned i_out = 0; i_out < out_size / res_T::size; i_out++) {
@@ -157,9 +187,9 @@ void clista_latency(
         #pragma HLS DATA_PACK variable=res_pack
         ResPack: for (int i_pack = 0; i_pack < res_T::size; i_pack++) {
             #pragma HLS UNROLL
-            res_pack[i_pack] = res[i_out * res_T::size + i_pack];
+            res_pack[i_pack] = _res[i_out * res_T::size + i_pack];
         }
-        res_stream.write(res_pack);
+        _res_stream.write(res_pack);
     }
 
     // const int in_size = CONFIG_T::in_height * CONFIG_T::in_width * CONFIG_T::n_chan;
@@ -253,7 +283,7 @@ void clista_resource(
                 tmp[iacc] = tmp[iacc] + data[iacc];
             }
 
-            nnet::conv_2d_cl<typename data_T::value_type, typename res_T::value_type, CONFIG_T>(tmp, acc, weights, biases);
+            nnet::conv_2d_cl<typename data_T::value_type, typename data_T::value_type, CONFIG_T>(tmp, acc, weights, biases);
 
             Activation2: for (int iacc = 0; iacc < out_size; iacc++) {
                 tmp[iacc] = CONFIG_T::template softshrink<typename data_T::value_type, typename data_T::value_type>::activation(acc[iacc], CONFIG_T::theta);

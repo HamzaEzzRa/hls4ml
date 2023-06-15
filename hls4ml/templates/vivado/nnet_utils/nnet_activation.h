@@ -774,6 +774,37 @@ void  ternary_tanh(data_T data[CONFIG_T::n_in], res_T res[CONFIG_T::n_in])
  
 }
 
+// *************************************************
+//       Softshrink Activation
+// *************************************************
+template<class data_T, class res_T, typename CONFIG_T>
+void  softshrink(data_T data[CONFIG_T::n_in], data_T theta, res_T res[CONFIG_T::n_in])
+{
+    #pragma HLS PIPELINE
+
+    data_T datareg;
+    for (int ii=0; ii<CONFIG_T::n_in; ii++) {
+        datareg = data[ii];
+        if (datareg > theta) res[ii] = datareg - theta;
+        else if (datareg < -theta) res[ii] = datareg + theta;
+        else res[ii] = 0;
+    }
+}
+
+// template<class data_T, class res_T, typename CONFIG_T>
+// void  softshrink(data_T data[CONFIG_T::n_in], data_T theta[CONFIG_T::n_in], res_T res[CONFIG_T::n_in])
+// {
+//     #pragma HLS PIPELINE
+
+//     data_T datareg;
+//     for (int ii=0; ii<CONFIG_T::n_in; ii++) {
+//         datareg = data[ii];
+//         if (datareg > theta[ii]) res[ii] = datareg - theta[ii];
+//         else if (datareg < -theta[ii]) res[ii] = datareg + theta[ii];
+//         else res[ii] = 0;
+//     }
+// }
+
 }
 
 #endif
