@@ -50,7 +50,7 @@ def parse_dense_layer(keras_layer, input_names, input_shapes, data_reader):
     return layer, output_shape
 
 
-activation_layers = ['Activation', 'LeakyReLU', 'ThresholdedReLU', 'ELU', 'PReLU', 'Softmax', 'ReLU']
+activation_layers = ['Activation', 'LeakyReLU', 'ThresholdedReLU', 'ELU', 'PReLU', 'Softmax', 'ReLU', 'Softshrink']
 
 
 @keras_handler(*activation_layers)
@@ -71,6 +71,8 @@ def parse_activation_layer(keras_layer, input_names, input_shapes, data_reader):
         layer['class_name'] = 'Activation'
     elif layer['class_name'] == 'PReLU':
         layer['alpha_data'] = get_weights_data(data_reader, layer['name'], 'alpha')
+    elif layer['class_name'] == 'Softshrink':
+        layer['activ_param'] = keras_layer['config'].get('theta', 0.1)
 
     if layer['class_name'] == 'Activation' and layer['activation'] == 'softmax':
         layer['class_name'] = 'Softmax'

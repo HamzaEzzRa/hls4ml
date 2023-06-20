@@ -763,6 +763,8 @@ class ParametrizedActivation(Activation):
             return 'leaky_relu'
         elif act == 'thresholdedrelu':
             return 'thresholded_relu'
+        elif act =='softshrink':
+            return 'softshrink'
         else:
             return act  # ELU activation
 
@@ -1279,6 +1281,7 @@ layer_map = {
     'LeakyReLU': ParametrizedActivation,
     'ThresholdedReLU': ParametrizedActivation,
     'ELU': ParametrizedActivation,
+    'Softshrink': ParametrizedActivation,
     'PReLU': PReLU,
     'Softmax': Softmax,
     'TernaryTanh': TernaryTanh,

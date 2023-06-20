@@ -61,6 +61,7 @@ def parse_qactivation_layer(keras_layer, input_names, input_shapes, data_reader)
         'quantized_bits',
         'binary',
         'ternary',
+        'quantized_softshrink'
     ]
 
     layer = parse_default_keras_layer(keras_layer, input_names)
