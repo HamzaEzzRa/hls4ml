@@ -1,0 +1,14 @@
+{
+    "files.associations": {
+        "*.html": "html",
+        "*.sql": "oracle",
+        "*.ddl": "oracle",
+        "*.dml": "oracle",
+        "*.pks": "oracle",
+        "*.pkb": "oracle",
+        "*.h": "cpp",
+        "array": "cpp",
+        "string": "cpp",
+        "string_view": "cpp"
+    }
+}

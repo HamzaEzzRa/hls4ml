@@ -1,25 +1,10 @@
-from hls4ml.model.optimizer import OptimizerPass, ConfigurableOptimizerPass, register_pass
-from hls4ml.model.layers import BatchNormalization, Dense, Conv1D, Conv2D, register_layer, layer_map
-from hls4ml.model.types import IntegerPrecisionType, FixedPrecisionType, ExponentPrecisionType, NamedType
-import tensorflow as tf
 import numpy as np
-from qkeras import get_quantizer
+import tensorflow as tf
 
-class QKerasPO2Quantizer(object):
-    def __init__(self, config):
-        self.bits = config['config']['bits']
-        self.quantizer_fn = get_quantizer(config)
-        self.hls_type = ExponentPrecisionType(width=self.bits, signed=True)
+from hls4ml.model.layers import BatchNormalization, register_layer
+from hls4ml.model.optimizer import ConfigurableOptimizerPass, OptimizerPass, register_pass
+from hls4ml.model.types import FixedPrecisionType, IntegerPrecisionType, NamedType, QKerasPO2Quantizer
 
-    def __call__(self, data):
-        '''
-        Weights are rounded to nearest power of 2
-        '''
-        x = tf.convert_to_tensor(data)
-        y = self.quantizer_fn(x)
-        if hasattr(y, 'numpy'):
-            y = y.numpy()
-        return y
 
 class OutputRoundingSaturationMode(ConfigurableOptimizerPass):
     '''
@@ -27,7 +12,7 @@ class OutputRoundingSaturationMode(ConfigurableOptimizerPass):
     of the layers specific in layer list.
     The layer list is empty by default.
     To specify which layer to apply this pass to, perform e.g.:
-    hls4ml.model.optimizer.get_optimizer('output_rounding_saturation_mode').configure(layers=['Dense', 'Activation', 'BatchNormalization'])
+    hls4ml.model.optimizer.get_optimizer('output_rounding_saturation_mode').configure(layers=['Dense', 'Activation'])
     The Rounding and Saturation modes are 'None' by default (so use the compiler defaults)
     To set which mode to use:
     hls4ml.model.optimizer.get_optimizer('output_rounding_saturation_mode').configure(rounding_mode='AP_RND_CONV')
@@ -35,9 +20,9 @@ class OutputRoundingSaturationMode(ConfigurableOptimizerPass):
     '''
 
     def __init__(self):
-        self.layers = [] 
-        self.rounding_mode = None 
-        self.saturation_mode = None 
+        self.layers = []
+        self.rounding_mode = None
+        self.saturation_mode = None
         self.saturation_bits = None
 
     def match(self, node):
@@ -56,8 +41,15 @@ class OutputRoundingSaturationMode(ConfigurableOptimizerPass):
         if isinstance(old_precision, IntegerPrecisionType):
             new_precision = IntegerPrecisionType(old_precision.width, old_precision.signed)
         elif isinstance(old_precision, FixedPrecisionType):
-            new_precision = FixedPrecisionType(old_precision.width, old_precision.integer, old_precision.signed, self.rounding_mode, self.saturation_mode, self.saturation_bits)
-        else: # in case the precision is a string
+            new_precision = FixedPrecisionType(
+                old_precision.width,
+                old_precision.integer,
+                old_precision.signed,
+                self.rounding_mode,
+                self.saturation_mode,
+                self.saturation_bits,
+            )
+        else:  # in case the precision is a string
             new_precision = self.precision_string_modify(old_precision)
 
         out_var = node.get_output_variable()
@@ -66,8 +58,8 @@ class OutputRoundingSaturationMode(ConfigurableOptimizerPass):
         node.attributes['result_t'] = out_t
 
         if node.get_attr('accum_t') is not None:
-            accum_t = NamedType('layer{}_accum_t'.format(node.index), new_precision)
-            node.set_attr('accum_t', new_precision)
+            accum_t = NamedType(f'layer{node.index}_accum_t', new_precision)
+            node.set_attr('accum_t', accum_t)
         return False
 
     def precision_string_modify(self, pstr):
@@ -83,9 +75,10 @@ class OutputRoundingSaturationMode(ConfigurableOptimizerPass):
         pstr = pstr.replace('>', mode)
         return pstr
 
+
 class ApplyAlpha(BatchNormalization):
-    ''' A custom layer to scale the output of a QDense layer which used 'alpha != 1'
-        Inference computation uses BatchNormalization methods'''
+    '''A custom layer to scale the output of a QDense layer which used 'alpha != 1'
+    Inference computation uses BatchNormalization methods'''
 
     def initialize(self):
         inp = self.get_input_variable()
@@ -97,7 +90,7 @@ class ApplyAlpha(BatchNormalization):
         scale_quantizer = self.get_attr('scale_quantizer')
         bias = self.get_attr('bias_data')
         bias_quantizer = self.get_attr('bias_quantizer')
-        
+
         self.add_weights(scale, quantizer=scale_quantizer)
         self.add_bias(bias, quantizer=bias_quantizer)
 
@@ -106,6 +99,7 @@ class ApplyAlpha(BatchNormalization):
 
     def add_bias(self, bias, quantizer=None):
         self.add_weights_variable(name='bias', var_name='b{index}', data=bias, quantizer=quantizer)
+
 
 def register_qkeras():
     # Register the layer types to the layer map
@@ -117,14 +111,16 @@ def register_qkeras():
     register_pass('extract_ternary_threshold', ExtractTernaryThreshold)
     register_pass('fuse_consecutive_batch_normalization', FuseConsecutiveBatchNormalization)
 
+
 class QKerasFactorizeAlpha(OptimizerPass):
     '''OptimizerPass for extracting alpha "scale" from QKeras quantized layer.
-       The weights of the Q{Dense, Conv} layer are scaled to the common data type,
-       and an 'ApplyAlpha' layer is inserted to reapply the scale.
+    The weights of the Q{Dense, Conv} layer are scaled to the common data type,
+    and an 'ApplyAlpha' layer is inserted to reapply the scale.
     '''
+
     def match(self, node):
         q_layer = node.class_name in ['Dense', 'Conv1D', 'Conv2D', 'Conv2DBatchnorm']
-        has_w_quant = node.get_attr('weight_quantizer') is not None 
+        has_w_quant = node.get_attr('weight_quantizer') is not None
         has_b_quant = node.get_attr('bias_quantizer') is not None
         has_w_alpha, has_b_alpha = False, False
         if has_w_quant:
@@ -145,17 +141,16 @@ class QKerasFactorizeAlpha(OptimizerPass):
     def transform(self, model, node):
         # The quantizer has to be applied to set the scale attribute
         # This must be applied to the _unquantized_ weights to obtain the correct scale
-        quantizer = node.weights['weight'].quantizer.quantizer_fn # get QKeras quantizer
-        weights = node.weights['weight'].data_unquantized # get weights
+        quantizer = node.weights['weight'].quantizer.quantizer_fn  # get QKeras quantizer
+        weights = node.weights['weight'].data_unquantized  # get weights
         qweights = quantizer(tf.convert_to_tensor(weights))
         if isinstance(quantizer.scale, (int, float)):
             scale = np.ones(shape=node.get_output_variable().shape[-1]) * quantizer.scale
         else:
             scale = quantizer.scale.numpy()
-        unscale = 1. / scale
+        unscale = 1.0 / scale
 
-        new_weights = unscale * qweights # use the quantized weights for safety
-
+        new_weights = unscale * qweights  # use the quantized weights for safety
 
         qcfg = quantizer.get_config()
         alpha = qcfg['alpha']
@@ -175,9 +170,9 @@ class QKerasFactorizeAlpha(OptimizerPass):
             bias_quantizer = node.weights['bias'].quantizer
         node.weights['bias'].data = np.zeros(bias.shape)
 
-        has_w_quant = node.get_attr('weight_quantizer') is not None 
+        has_w_quant = node.get_attr('weight_quantizer') is not None
         has_b_quant = node.get_attr('bias_quantizer') is not None
-        if has_w_quant: 
+        if has_w_quant:
             node.attributes['weight_quantizer'].alpha = 1
         if has_b_quant:
             node.attributes['bias_quantizer'].alpha = 1
@@ -185,7 +180,7 @@ class QKerasFactorizeAlpha(OptimizerPass):
         # insert a Batch Normalization layer to apply the alpha scale
         if alpha == 'auto_po2':
             scale_bits = np.maximum(np.abs(np.log2(scale)).max().astype('int') + 1, 2)
-            scale_quantizer = QKerasPO2Quantizer({'class_name' : 'quantized_po2', 'config': {'bits': scale_bits}})
+            scale_quantizer = QKerasPO2Quantizer({'class_name': 'quantized_po2', 'config': {'bits': scale_bits}})
         else:
             scale_quantizer = None
 
@@ -197,35 +192,39 @@ class QKerasFactorizeAlpha(OptimizerPass):
             n_in = node.get_attr('n_out')
 
         attrs = {
-            'name' : node.get_attr('name') + '_alpha',
-            'class_name' : 'Alpha',
-            'inputs' : node.outputs,
-            'n_in' : n_in,
-            'n_filt' : node.get_attr('n_filt', -1),
-            'reuse_factor' : node.get_attr('reuse_factor'),
+            'name': node.get_attr('name') + '_alpha',
+            'class_name': 'Alpha',
+            'inputs': node.outputs,
+            'n_in': n_in,
+            'n_filt': node.get_attr('n_filt', -1),
+            'reuse_factor': node.get_attr('reuse_factor'),
             'scale_data': scale,
             'scale_quantizer': scale_quantizer,
             'bias_data': bias,
             'bias_quantizer': bias_quantizer,
-            'Trace' : node.get_attr('Trace', False) 
+            'trace': node.get_attr('trace', False),
         }
         alpha_layer = model.make_node(ApplyAlpha, node.name + '_alpha', attrs, node.outputs)
         model.insert_node(alpha_layer)
         return True
 
+
 class FuseConsecutiveBatchNormalization(OptimizerPass):
     '''OptimizerPass to merge consecutive BatchNormalization layers.
-       These may exist in a model after QKerasFactorizeAlpha layer.
-       Scale and Bias of each layer are combined into scale and bias of a single layer.
+    These may exist in a model after QKerasFactorizeAlpha layer.
+    Scale and Bias of each layer are combined into scale and bias of a single layer.
     '''
 
     def match(self, node):
-        return isinstance(node, BatchNormalization) and \
-               isinstance(node.get_input_node(), BatchNormalization)
+        return isinstance(node, BatchNormalization) and isinstance(node.get_input_node(), BatchNormalization)
 
     def transform(self, model, node):
         bn0 = node.get_input_node()
         bn1 = node
+        bn0_map = bn0.get_output_use_map()
+        bn1_map = bn1.get_output_use_map()
+        if len(bn0_map[bn0.name]) > 1 or len(bn1_map[bn1.name]) > 1:
+            return False
 
         s0 = bn0.weights['scale'].data
         b0 = bn0.weights['bias'].data
@@ -241,8 +240,9 @@ class FuseConsecutiveBatchNormalization(OptimizerPass):
         model.remove_node(node, rewire=True)
         return True
 
+
 class ExtractTernaryThreshold(OptimizerPass):
-    ''' The input value (threshold) at which the output of a a ternary activation
+    '''The input value (threshold) at which the output of a a ternary activation
     changes is configurable. This pass extracts that threshold point, inserting
     a BatchNormalization layer to execute the scaling. That BatchNormalization
     layer is then expected to be fused into a BatchNormalizationQuantizedTanh
@@ -259,19 +259,18 @@ class ExtractTernaryThreshold(OptimizerPass):
         node.set_attr('threshold', 0.5)
 
         attrs = {
-            'name' : node.get_attr('name') + '_scale',
-            'class_name' : 'Alpha',
-            'inputs' : node.get_input_node().outputs,
-            'outputs' : node.inputs,
-            'n_in' : node.get_attr('n_in'),
-            'n_filt' : node.get_attr('n_filt', -1),
-            'reuse_factor' : node.get_attr('reuse_factor'),
+            'name': node.get_attr('name') + '_scale',
+            'class_name': 'Alpha',
+            'inputs': node.get_input_node().outputs,
+            'outputs': node.inputs,
+            'n_in': node.get_attr('n_in'),
+            'n_filt': node.get_attr('n_filt', -1),
+            'reuse_factor': node.get_attr('reuse_factor'),
             'scale_data': scale,
             'bias_data': bias,
-            'Trace' : node.get_attr('Trace', False)
+            'trace': node.get_attr('trace', False),
         }
 
         layer = model.make_node(ApplyAlpha, node.name + '_scale', attrs, node.inputs.copy())
         model.insert_node(layer, before=node)
         return True
-
