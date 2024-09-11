@@ -48,10 +48,10 @@ source [file join $tcldir project.tcl]
 
 
 
-set project_name "project_1"
+set project_name "myproject"
 set design_name "design_1"
 set hls_solution_name "solution1"
-#set acc_name "${myproject}_axi"
+#set acc_name "${project_name}_axi"
 set part_name "xczu7ev-ffvc1156-2-e"
 set board_name "xilinx.com:zcu104:part0:1.1"
 
@@ -64,15 +64,14 @@ set board_name "xilinx.com:zcu104:part0:1.1"
 
 set list_projs [get_projects -quiet]
 if { $list_projs eq "" } {
-   create_project project_1 ${myproject}_vivado_accelerator -part xczu7ev-ffvc1156-2-e -force
+   create_project project_1 ${project_name}_vivado_accelerator -part xczu7ev-ffvc1156-2-e -force
    set_property BOARD_PART xilinx.com:zcu104:part0:1.1 [current_project]
 }
 
 
 
 # Setup IP repo
-set_property  ip_repo_paths ${myproject}_prj/${hls_solution_name}/impl/ip [current_project]
-#set_property  ip_repo_paths /home/subnugler/Desktop/MICROBLAZE_TEST/Microblaze/myproject_prj/${hls_solution_name}/impl/ip [current_project]
+set_property  ip_repo_paths ${project_name}_prj/${hls_solution_name}/impl/ip [current_project]
 update_ip_catalog
 
 
@@ -1782,9 +1781,9 @@ create_root_design ""
 
 #WRAP THE MODEL
 
-make_wrapper -files [get_files ./${myproject}_vivado_accelerator/project_1.srcs/sources_1/bd/design_1/design_1.bd] -top
+make_wrapper -files [get_files ./${project_name}_vivado_accelerator/project_1.srcs/sources_1/bd/design_1/design_1.bd] -top
 
-add_files -norecurse ./${myproject}_vivado_accelerator/project_1.srcs/sources_1/bd/design_1/hdl/design_1_wrapper.v
+add_files -norecurse ./${project_name}_vivado_accelerator/project_1.srcs/sources_1/bd/design_1/hdl/design_1_wrapper.v
 
 reset_run impl_1
 reset_run synth_1
